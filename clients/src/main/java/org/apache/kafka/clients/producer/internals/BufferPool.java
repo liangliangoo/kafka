@@ -16,13 +16,6 @@
  */
 package org.apache.kafka.clients.producer.internals;
 
-import java.nio.ByteBuffer;
-import java.util.ArrayDeque;
-import java.util.Deque;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.locks.Condition;
-import java.util.concurrent.locks.ReentrantLock;
-
 import org.apache.kafka.clients.producer.BufferExhaustedException;
 import org.apache.kafka.common.KafkaException;
 import org.apache.kafka.common.MetricName;
@@ -30,6 +23,13 @@ import org.apache.kafka.common.metrics.Metrics;
 import org.apache.kafka.common.metrics.Sensor;
 import org.apache.kafka.common.metrics.stats.Meter;
 import org.apache.kafka.common.utils.Time;
+
+import java.nio.ByteBuffer;
+import java.util.ArrayDeque;
+import java.util.Deque;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.Condition;
+import java.util.concurrent.locks.ReentrantLock;
 
 
 /**
@@ -46,16 +46,20 @@ public class BufferPool {
 
     static final String WAIT_TIME_SENSOR_NAME = "bufferpool-wait-time";
 
+    // totalMemory =  free.size() * poolableSize + nonPooledAvailableMemory
     private final long totalMemory;
+    // poolableSize 指的就是Deque<ByteBuffer> 中的byteBuffer的大小16384 byte 也就是 16K
     private final int poolableSize;
     private final ReentrantLock lock;
     private final Deque<ByteBuffer> free;
+    // 等待中的线程条件变量  线程顺序执行的保证
     private final Deque<Condition> waiters;
-    /** Total available memory is the sum of nonPooledAvailableMemory and the number of byte buffers in free * poolableSize.  */
+    /** Total available memory is the sum of nonPooledAvailableMemory and the number of byte buffers in free * poolableSize. 非池化可用空间  */
     private long nonPooledAvailableMemory;
     private final Metrics metrics;
     private final Time time;
     private final Sensor waitTime;
+    // 代表produce 状态
     private boolean closed;
 
     /**
@@ -72,6 +76,8 @@ public class BufferPool {
         this.lock = new ReentrantLock();
         this.free = new ArrayDeque<>();
         this.waiters = new ArrayDeque<>();
+        // 在初始化的时候，总内存大小就是制定的memory 单是非池化的空间也是memory
+        // 其实非池化的内存空间指的就是<p> 未申请的内存 </p>
         this.totalMemory = memory;
         this.nonPooledAvailableMemory = memory;
         this.metrics = metrics;
@@ -109,6 +115,7 @@ public class BufferPool {
      *         forever)
      */
     public ByteBuffer allocate(int size, long maxTimeToBlockMs) throws InterruptedException {
+        // 申请的内存空间大于总内存 抛出异常
         if (size > this.totalMemory)
             throw new IllegalArgumentException("Attempt to allocate " + size
                                                + " bytes, but there is a hard limit of "
@@ -116,6 +123,7 @@ public class BufferPool {
                                                + " on memory allocations.");
 
         ByteBuffer buffer = null;
+        // 上锁保证内存申请安全
         this.lock.lock();
 
         if (this.closed) {
@@ -131,13 +139,16 @@ public class BufferPool {
             // now check if the request is immediately satisfiable with the
             // memory on hand or if we need to block
             int freeListSize = freeSize() * this.poolableSize;
+            // 判断空闲内存是否大于申请的内存空间
             if (this.nonPooledAvailableMemory + freeListSize >= size) {
                 // we have enough unallocated or pooled memory to immediately
                 // satisfy the request, but need to allocate the buffer
+                // 从非池化的内存中申请一块内存空间（size）
                 freeUp(size);
                 this.nonPooledAvailableMemory -= size;
             } else {
                 // we are out of memory and will have to block
+                // 因为当前生产者内存空间不足了，需要将当前线程阻塞
                 int accumulated = 0;
                 Condition moreMemory = this.lock.newCondition();
                 try {
@@ -148,10 +159,13 @@ public class BufferPool {
                     while (accumulated < size) {
                         long startWaitNs = time.nanoseconds();
                         long timeNs;
+                        // 判断是否超时
                         boolean waitingTimeElapsed;
                         try {
+                            // await 使当前线程一直等待，直到它发出信号或中断，或者指定的等待时间过去
                             waitingTimeElapsed = !moreMemory.await(remainingTimeToBlockNs, TimeUnit.NANOSECONDS);
                         } finally {
+                            // 计算阻塞时长 用于后面重新计算下一轮阻塞时间
                             long endWaitNs = time.nanoseconds();
                             timeNs = Math.max(0L, endWaitNs - startWaitNs);
                             recordWaitTime(timeNs);
@@ -166,19 +180,23 @@ public class BufferPool {
                                 + maxTimeToBlockMs + " ms. Total memory: " + totalMemory() + " bytes. Available memory: " + availableMemory()
                                 + " bytes. Poolable size: " + poolableSize() + " bytes");
                         }
-
+                        // 重新计算下一轮需要阻塞的时长
                         remainingTimeToBlockNs -= timeNs;
 
                         // check if we can satisfy this request from the free list,
                         // otherwise allocate memory
                         if (accumulated == 0 && size == this.poolableSize && !this.free.isEmpty()) {
                             // just grab a buffer from the free list
+                            // 走到这里的逻辑 可用空间小于消息长度
+                            // 并且有线程申请的时候刚好申请的是poolableSize大小的内存 释放直接释放到free队列 所以这里再进一步检查
                             buffer = this.free.pollFirst();
                             accumulated = size;
                         } else {
                             // we'll need to allocate memory, but we may only get
                             // part of what we need on this iteration
+                            // 释放free队列空间  有可能本轮释放的长度还是小于消息大小 所以需要while循环等待其他线程释放内存
                             freeUp(size - accumulated);
+                            // 取最小值作为当前的可用空间
                             int got = (int) Math.min(size - accumulated, this.nonPooledAvailableMemory);
                             this.nonPooledAvailableMemory -= got;
                             accumulated += got;
@@ -188,7 +206,9 @@ public class BufferPool {
                     accumulated = 0;
                 } finally {
                     // When this loop was not able to successfully terminate don't loose available memory
+                    // 防止异常退出 有内存泄漏情况 所以做回滚
                     this.nonPooledAvailableMemory += accumulated;
+                    // 移除等到队列中当前线程的条件
                     this.waiters.remove(moreMemory);
                 }
             }
@@ -205,6 +225,7 @@ public class BufferPool {
         }
 
         if (buffer == null)
+            // 从非池化空间申请内存
             return safeAllocateByteBuffer(size);
         else
             return buffer;
@@ -265,6 +286,7 @@ public class BufferPool {
         lock.lock();
         try {
             if (size == this.poolableSize && size == buffer.capacity()) {
+                // 直接归还进free队列 实现复用
                 buffer.clear();
                 this.free.add(buffer);
             } else {

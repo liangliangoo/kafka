@@ -240,6 +240,7 @@ public class Sender implements Runnable {
         // main loop, runs until close is called
         while (running) {
             try {
+                // sender线程从缓冲区（RecordAccumulator 默认32M）拉去数据
                 runOnce();
             } catch (Exception e) {
                 log.error("Uncaught error in kafka producer I/O thread: ", e);
@@ -296,6 +297,8 @@ public class Sender implements Runnable {
      *
      */
     void runOnce() {
+
+        // 事务相关操作
         if (transactionManager != null) {
             try {
                 transactionManager.maybeResolveSequences();
@@ -324,13 +327,17 @@ public class Sender implements Runnable {
         }
 
         long currentTimeMs = time.milliseconds();
+        // 发送数据
         long pollTimeout = sendProducerData(currentTimeMs);
+        // 获取发送结果
         client.poll(pollTimeout, currentTimeMs);
     }
 
     private long sendProducerData(long now) {
+        // 获取元数据
         Cluster cluster = metadata.fetch();
         // get the list of partitions with data ready to send
+        // 判断缓冲区中的数据是否准备好(批次、linger.ms)
         RecordAccumulator.ReadyCheckResult result = this.accumulator.ready(cluster, now);
 
         // if there are any partitions whose leaders are not known yet, force metadata update
