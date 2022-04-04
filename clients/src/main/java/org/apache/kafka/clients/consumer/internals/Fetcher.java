@@ -261,6 +261,7 @@ public class Fetcher<K, V> implements Closeable {
             } else {
                 maxVersion = ApiKeys.FETCH.latestVersion();
             }
+            // 构建一个抓去请求
             final FetchRequest.Builder request = FetchRequest.Builder
                     .forConsumer(maxVersion, this.maxWaitMs, this.minBytes, data.toSend())
                     .isolationLevel(isolationLevel)

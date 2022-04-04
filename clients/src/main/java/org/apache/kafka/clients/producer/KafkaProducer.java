@@ -319,7 +319,7 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
         this(Utils.propsToMap(properties), keySerializer, valueSerializer);
     }
 
-    // visible for testing
+    // visible for testing kafkaProducer 初始化过程
     @SuppressWarnings("unchecked")
     KafkaProducer(ProducerConfig config,
                   Serializer<K> keySerializer,
@@ -329,6 +329,7 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
                   ProducerInterceptors<K, V> interceptors,
                   Time time) {
         try {
+            // 这里都是一些相关参数的配置
             this.producerConfig = config;
             this.time = time;
 
@@ -446,7 +447,7 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
                 this.metadata.bootstrap(addresses);
             }
             this.errors = this.metrics.sensor("errors");
-            // sender线程用于发送数据
+            // sender线程用于发送数据  初始化sender线程
             this.sender = newSender(logContext, kafkaClient, this.metadata);
             String ioThreadName = NETWORK_THREAD_PREFIX + " | " + clientId;
             // 这是daemon线程

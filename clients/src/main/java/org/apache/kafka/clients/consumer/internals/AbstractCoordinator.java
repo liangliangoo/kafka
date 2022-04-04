@@ -242,7 +242,9 @@ public abstract class AbstractCoordinator implements Closeable {
                 fatalFindCoordinatorException = null;
                 throw fatalException;
             }
+            // 创建一个查找coordinator 的请求
             final RequestFuture<Void> future = lookupCoordinator();
+            // 获取结果数据
             client.poll(future, timer);
 
             if (!future.isDone()) {

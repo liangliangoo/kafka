@@ -456,6 +456,7 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
     }
 
     private boolean coordinatorUnknownAndUnready(Timer timer) {
+        // coordinator 初始化
         return coordinatorUnknown() && !ensureCoordinatorReady(timer);
     }
 
@@ -483,7 +484,9 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
             }
             // Always update the heartbeat last poll time so that the heartbeat thread does not leave the
             // group proactively due to application inactivity even if (say) the coordinator cannot be found.
+            // 心跳
             pollHeartbeat(timer.currentTimeMs());
+            // 判断coordinator是否准备好
             if (coordinatorUnknownAndUnready(timer)) {
                 return false;
             }

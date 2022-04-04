@@ -71,7 +71,9 @@ public class Consumer extends ShutdownableThread {
 
     @Override
     public void doWork() {
+        // 主题订阅
         consumer.subscribe(Collections.singletonList(this.topic));
+        // 拉去数据
         ConsumerRecords<Integer, String> records = consumer.poll(Duration.ofSeconds(1));
         for (ConsumerRecord<Integer, String> record : records) {
             System.out.println(groupId + " received message : from partition " + record.partition() + ", (" + record.key() + ", " + record.value() + ") at offset " + record.offset());
