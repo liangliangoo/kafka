@@ -2490,16 +2490,21 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
      * when the lock is not available, however, we just throw an exception (since multi-threaded usage is not
      * supported).
      * @throws ConcurrentModificationException if another thread already has the lock
+     * kafka的consumer不是线程安全的，但是producer是线程安全的
+     * consumer在执行任意方法（wakeup除外）是时候，都会调用acquire 来判断是否是同一个线程在操作
+     * 该方法类似于一个轻量级的锁
      */
     private void acquire() {
         long threadId = Thread.currentThread().getId();
         if (threadId != currentThread.get() && !currentThread.compareAndSet(NO_CURRENT_THREAD, threadId))
             throw new ConcurrentModificationException("KafkaConsumer is not safe for multi-threaded access");
+        // 类似于可重入锁
         refcount.incrementAndGet();
     }
 
     /**
      * Release the light lock protecting the consumer from multi-threaded access.
+     * 和acquire 方法对应，释放”可重入锁“
      */
     private void release() {
         if (refcount.decrementAndGet() == 0)
